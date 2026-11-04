@@ -1,0 +1,26 @@
+# Local use and quick testing: one container, SQLite and images on a named volume.
+#
+#   docker compose up --build
+#   docker compose logs snapshots | grep "setup token"     # then open http://localhost:8080/setup
+#
+# Set SETUP_TOKEN=... in your shell (or a .env file) to choose the setup token yourself.
+services:
+  snapshots:
+    build: .
+    image: snapshots:local
+    ports:
+      - "127.0.0.1:8080:8080"   # localhost only; put a TLS proxy in front to publish it
+    environment:
+      LOG_FORMAT: text
+      SETUP_TOKEN: ${SETUP_TOKEN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+    volumes:
+      - snapshots-data:/data
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  snapshots-data:

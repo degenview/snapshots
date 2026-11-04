@@ -1,0 +1,8 @@
+.git
+.github
+data
+bin
+dist
+*.md
+docs
+compose*.yaml

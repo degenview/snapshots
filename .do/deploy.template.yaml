@@ -1,0 +1,47 @@
+# DigitalOcean App Platform template behind the "Deploy to DO" button in the README.
+# Needs a persistent database (the app's disk is ephemeral), so it creates a development
+# Postgres. Images belong in a Spaces bucket: choose "S3-compatible bucket" in the setup wizard.
+spec:
+  name: degenview-snapshots
+  region: nyc
+  services:
+    - name: snapshots
+      github:
+        repo: degenview/snapshots
+        branch: main
+        deploy_on_push: false
+      dockerfile_path: Dockerfile
+      http_port: 8080
+      instance_count: 1
+      instance_size_slug: apps-s-1vcpu-0.5gb
+      health_check:
+        http_path: /readyz
+      envs:
+        - key: DATABASE_URL
+          scope: RUN_TIME
+          value: ${db.DATABASE_URL}
+        - key: PUBLIC_URL
+          scope: RUN_TIME
+          value: ${APP_URL}
+        # App Platform puts the client address in this header. Every peer is the platform's own
+        # ingress, so the header is trusted from any peer.
+        - key: CLIENT_IP_HEADER
+          scope: RUN_TIME
+          value: do-connecting-ip
+        - key: TRUSTED_PROXIES
+          scope: RUN_TIME
+          value: "*"
+        # Encrypts the bucket secret stored in the database. Paste a long random value:
+        #   openssl rand -hex 32
+        - key: SECRET_KEY
+          scope: RUN_TIME
+          type: SECRET
+        # Unlocks the setup wizard on first visit. Paste a long random value.
+        - key: SETUP_TOKEN
+          scope: RUN_TIME
+          type: SECRET
+  databases:
+    - name: db
+      engine: PG
+      version: "17"
+      production: false

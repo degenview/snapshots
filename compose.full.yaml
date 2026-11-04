@@ -1,0 +1,57 @@
+# The production-shaped stack for testing: Postgres for metadata and an S3 API for images.
+#
+#   docker compose -f compose.full.yaml up --build
+#
+# Open http://localhost:8080/setup, setup token "dev-setup-token-change-me", then choose
+# "S3-compatible bucket" with:
+#   Endpoint  http://s3:9090          Bucket  snapshots      Region  us-east-1
+#   Access key  test                 Secret key  test         Path-style  on
+#
+# These credentials and keys are for local testing only.
+services:
+  snapshots:
+    build: .
+    image: snapshots:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      LOG_FORMAT: text
+      DATABASE_URL: postgres://snapshots:snapshots@postgres:5432/snapshots?sslmode=disable
+      SECRET_KEY: dev-only-secret-key-change-me-0123456789abcdef
+      SETUP_TOKEN: dev-setup-token-change-me
+    depends_on:
+      postgres:
+        condition: service_healthy
+      s3:
+        condition: service_started
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: snapshots
+      POSTGRES_PASSWORD: snapshots
+      POSTGRES_DB: snapshots
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snapshots -d snapshots"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # A throwaway S3 API (adobe/s3mock) for trying the bucket path. Objects live in memory and are
+  # lost when it stops. For a closer match run MinIO, Garage or SeaweedFS yourself.
+  s3:
+    image: adobe/s3mock:latest
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: snapshots
+    ports:
+      - "127.0.0.1:9090:9090"
+
+volumes:
+  pg-data:
