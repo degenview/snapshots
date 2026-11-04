@@ -1,0 +1,11 @@
+/data/
+/bin/
+/dist/
+*.db
+*.db-shm
+*.db-wal
+secret.key
+.env
+.DS_Store
+coverage.out
+.idea/

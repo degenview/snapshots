@@ -1,0 +1,41 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.Rows).Close
+        - (*database/sql.Conn).Close
+        - (*database/sql.DB).Close
+        - (*os.File).Close
+        - (*os.Root).Close
+        - (*os.Root).Remove
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (io.ReadSeekCloser).Close
+        - (github.com/minio/minio-go/v7.Object).Close
+        - (*github.com/minio/minio-go/v7.Object).Close
+        - (*net/http.Response).Body.Close
+        - (github.com/degenview/snapshots/internal/storage.Store).Delete
+    gosec:
+      excludes:
+        - G104   # unchecked errors are handled by errcheck
+        - G115   # integer conversions: ranges are validated at the boundary
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, noctx, bodyclose, errcheck]
+formatters:
+  enable:
+    - gofmt
