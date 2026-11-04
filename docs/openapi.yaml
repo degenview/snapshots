@@ -1,0 +1,132 @@
+openapi: 3.0.3
+info:
+  title: DegenView Snapshots
+  version: 1.0.0
+  description: |
+    Upload API of the DegenView snapshot host. This is the protocol DegenView's
+    *Settings ▸ Snapshots* speaks: one POST of a PNG, answered with a link.
+    The admin console API (`/admin/api/*`) is internal to the bundled web UI and not covered here.
+  license:
+    name: AGPL-3.0-only
+paths:
+  /api/v1/images:
+    post:
+      summary: Upload a PNG image
+      description: |
+        The image is validated (structure, checksums, dimensions up to 8192 px a side and 32 megapixels),
+        stripped of metadata and stored. The response never redirects.
+      security:
+        - bearerAuth: []
+        - {}          # when the server is configured to accept uploads without a token
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Uploaded" }
+        "401": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429":
+          description: Rate limited
+          headers:
+            Retry-After: { schema: { type: integer }, description: Seconds until a retry may succeed }
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/Error" } }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+        "507": { $ref: "#/components/responses/Error" }
+  /i/{id}:
+    get:
+      summary: Fetch an image
+      description: Also answers `HEAD`, conditional requests (`ETag`) and `Range`. Unknown, malformed and expired ids all give the same 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 10 characters, `[0-9A-Za-z]`, optionally followed by `.png`.
+          schema: { type: string, pattern: "^[0-9A-Za-z]{10}(\\.png)?$" }
+      responses:
+        "200":
+          description: The image
+          content:
+            image/png: { schema: { type: string, format: binary } }
+        "304": { description: Not modified }
+        "404": { description: Not found or expired }
+        "429": { description: Rate limited }
+  /d/{secret}:
+    get:
+      summary: Delete confirmation page (HTML)
+      description: Shows the image and a button. Fetching this URL deletes nothing.
+      parameters:
+        - { name: secret, in: path, required: true, schema: { type: string, pattern: "^[0-9A-Za-z]{24}$" } }
+      responses:
+        "200": { description: Confirmation page }
+        "404": { description: Unknown secret }
+    post:
+      summary: Delete the image
+      parameters:
+        - { name: secret, in: path, required: true, schema: { type: string, pattern: "^[0-9A-Za-z]{24}$" } }
+      responses:
+        "200": { description: Deleted (HTML) }
+        "404": { description: Unknown secret }
+  /healthz:
+    get:
+      summary: Liveness
+      responses: { "200": { description: ok } }
+  /readyz:
+    get:
+      summary: Readiness (database and, once set up, storage reachable)
+      responses:
+        "200": { description: Ready }
+        "503": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: An upload token (`dvs_…`) created in the admin console.
+  schemas:
+    Uploaded:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          example: https://snaps.example.com/i/Xk3p9QwZtA
+        delete_url:
+          type: string
+          format: uri
+          description: Open to confirm deleting the image. Keep it private; anyone with it can delete.
+          example: https://snaps.example.com/d/q8Zk2mT4vYw9LpXc3NfRb7Ha
+        expires_at:
+          type: string
+          format: date-time
+          description: Omitted when images are kept forever.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [not_configured, rate_limited, unauthorized, invalid_token, unsupported_media_type,
+                     payload_too_large, image_too_large, invalid_image, quota_exceeded, busy,
+                     storage_error, internal, database_unavailable, storage_unavailable]
+            message: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
