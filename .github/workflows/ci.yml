@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: snapshots
+          POSTGRES_PASSWORD: snapshots
+          POSTGRES_DB: snapshots
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U snapshots" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TEST_POSTGRES_URL: postgres://snapshots:snapshots@localhost:5432/snapshots?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - run: go vet ./...
+      - name: Unit tests (SQLite and Postgres)
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Coverage
+        run: go tool cover -func=coverage.out | tail -1
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  vulncheck:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: snapshots:ci
+      - name: Container starts and reports healthy
+        run: |
+          docker run -d --name snap -p 8080:8080 snapshots:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8080/readyz >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          docker logs snap
+          [ "${ok:-}" = 1 ]
+          curl -fsS http://localhost:8080/setup | grep -q "Set up DegenView Snapshots"

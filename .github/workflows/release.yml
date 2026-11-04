@@ -1,0 +1,127 @@
+name: Release
+
+# Manual: Actions ▸ Release ▸ Run workflow. Publishes binaries, a multi-arch container image
+# (ghcr.io/degenview/snapshots) and a GitHub release for the tag v<version>.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the leading v (1.2.3, or 1.2.3-rc.1 for a prerelease)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - name: Release only from main
+        if: github.ref != 'refs/heads/main'
+        run: echo "::error::Run this workflow from the main branch."; exit 1
+      - uses: actions/checkout@v7
+      - id: v
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::Version must look like 1.2.3 or 1.2.3-rc.1 (got '$VERSION')."; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag v$VERSION already exists."; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+  ci:
+    name: Tests
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # tag and release
+      packages: write       # push the image
+      id-token: write       # provenance attestations
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Tag locally (GoReleaser reads the version from it)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+
+      - name: Build binaries
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean --skip=publish
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/degenview/snapshots
+          tags: |
+            type=semver,pattern={{version}},value=v${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ env.VERSION }},enable=${{ env.PRERELEASE == 'false' }}
+            type=raw,value=latest,enable=${{ env.PRERELEASE == 'false' }}
+      - id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ env.VERSION }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/degenview/snapshots
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--generate-notes --target "$GITHUB_SHA" --title "v$VERSION")
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          gh release create "v$VERSION" "${flags[@]}" dist/*.tar.gz dist/*.zip dist/checksums.txt
