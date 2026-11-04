@@ -65,7 +65,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: "1.26"
+          check-latest: true
 
       - name: Tag locally (GoReleaser reads the version from it)
         run: |
