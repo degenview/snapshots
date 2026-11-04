@@ -1,0 +1,11 @@
+{{define "content"}}
+<main class="narrow center">
+  <div class="logo" aria-hidden="true"></div>
+  <h1>{{.Heading}}</h1>
+  {{if .ImageURL}}<img class="preview" src="{{.ImageURL}}" alt="The snapshot that will be deleted">{{end}}
+  <p class="muted">The image will be removed from the server and its link will stop working. This cannot be undone.</p>
+  <form method="post">
+    <button class="btn danger" type="submit">Delete snapshot</button>
+  </form>
+</main>
+{{end}}

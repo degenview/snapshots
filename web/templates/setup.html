@@ -1,0 +1,108 @@
+{{define "content"}}
+{{with .Setup}}
+<main id="setup" class="narrow" data-can-seal="{{.CanSeal}}" data-postgres="{{.Postgres}}"
+      data-suggested-url="{{.SuggestedURL}}" data-data-dir="{{.DataDir}}" data-url-from-env="{{.URLFromEnv}}">
+{{end}}
+  <header class="center">
+    <div class="logo" aria-hidden="true"></div>
+    <h1>{{.Heading}}</h1>
+    <p class="muted">A few questions, then your image host is ready for DegenView.</p>
+    <ol class="steps" id="steps" aria-label="Progress">
+      <li data-step="1">Unlock</li><li data-step="2">Password</li><li data-step="3">Storage</li><li data-step="4">Options</li><li data-step="5">Done</li>
+    </ol>
+  </header>
+
+  <p id="error" class="notice error" role="alert" hidden></p>
+
+  <section data-panel="1" class="card">
+    <h2>Unlock setup</h2>
+    <p class="muted">Whoever opens this page first could claim the server, so setup needs the <strong>setup token</strong>.
+      It is printed in the server log when the server starts (look for <code>setup token</code>), or it is the <code>SETUP_TOKEN</code> you set.</p>
+    <label>Setup token
+      <input id="setup-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="off">
+    </label>
+    <div class="actions"><button class="btn primary" id="unlock">Continue</button></div>
+  </section>
+
+  <section data-panel="2" class="card" hidden>
+    <h2>Administrator password</h2>
+    <p class="muted">Protects this console. At least 12 characters; use a password manager.</p>
+    <label>Password <input id="password" type="password" autocomplete="new-password" minlength="12"></label>
+    <label>Repeat password <input id="password2" type="password" autocomplete="new-password" minlength="12"></label>
+    <div class="actions"><button class="btn" data-back>Back</button><button class="btn primary" id="to-storage">Continue</button></div>
+  </section>
+
+  <section data-panel="3" class="card" hidden>
+    <h2>Where should images be stored?</h2>
+    <div class="choice">
+      <label class="radio"><input type="radio" name="storage" value="local" checked>
+        <span><strong>Local disk</strong><small>Files in <code id="data-dir"></code> on this server. Simple; needs a persistent volume.</small></span></label>
+      <label class="radio"><input type="radio" name="storage" value="s3">
+        <span><strong>S3-compatible bucket</strong><small>AWS S3, DigitalOcean Spaces, Cloudflare R2, MinIO, …</small></span></label>
+    </div>
+    <p class="notice warn" id="ephemeral-warning" hidden>This server uses Postgres, which usually means a platform without a persistent disk (such as DigitalOcean App Platform). Local files would vanish on every deploy: choose a bucket.</p>
+    <p class="notice warn" id="no-key-warning" hidden>To store a bucket secret, set a <code>SECRET_KEY</code> environment variable (at least 32 characters, e.g. <code>openssl rand -hex 32</code>) and restart. The secret is encrypted with it.</p>
+    <div id="s3-fields" hidden>
+      <label>Endpoint <input id="s3-endpoint" placeholder="https://nyc3.digitaloceanspaces.com (empty for AWS)" autocomplete="off"></label>
+      <div class="row">
+        <label>Region <input id="s3-region" placeholder="us-east-1" autocomplete="off"></label>
+        <label>Bucket <input id="s3-bucket" autocomplete="off"></label>
+      </div>
+      <div class="row">
+        <label>Access key ID <input id="s3-access" autocomplete="off" spellcheck="false"></label>
+        <label>Secret access key <input id="s3-secret" type="password" autocomplete="new-password" spellcheck="false"></label>
+      </div>
+      <label>Key prefix (optional) <input id="s3-prefix" placeholder="snapshots/" autocomplete="off"></label>
+      <label class="check"><input id="s3-pathstyle" type="checkbox"> Path-style addressing (MinIO and some proxies)</label>
+    </div>
+    <p id="storage-result" class="notice" hidden></p>
+    <div class="actions">
+      <button class="btn" data-back>Back</button>
+      <button class="btn" id="test-storage">Test storage</button>
+      <button class="btn primary" id="to-options">Continue</button>
+    </div>
+  </section>
+
+  <section data-panel="4" class="card" hidden>
+    <h2>Options</h2>
+    <label>Public address of this server
+      <input id="public-url" autocomplete="off" spellcheck="false">
+      <small>Image links are built from this, so use the address people will open (https).</small>
+    </label>
+    <label>Delete images after
+      <select id="retention">
+        <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option>
+        <option value="90" selected>90 days</option><option value="365">1 year</option><option value="0">Never</option>
+      </select>
+    </label>
+    <label class="check"><input id="auth-required" type="checkbox" checked> Require an upload token (recommended)</label>
+    <p class="notice warn" id="open-warning" hidden>Without a token anyone who finds this address can upload images to your storage. Rate limits slow abuse but do not stop it.</p>
+    <label id="token-name-wrap">Name for the first token <input id="token-name" value="DegenView" autocomplete="off"></label>
+    <details>
+      <summary>Limits</summary>
+      <div class="row">
+        <label>Largest image (MiB) <input id="max-image" type="number" min="1" max="64" value="24"></label>
+        <label>Total storage quota (GiB, 0 = none) <input id="quota" type="number" min="0" value="0"></label>
+      </div>
+      <div class="row">
+        <label>Uploads per hour, per IP <input id="uploads-hour" type="number" min="1" value="60"></label>
+        <label>Image views per minute, per IP <input id="views-minute" type="number" min="1" value="600"></label>
+      </div>
+    </details>
+    <div class="actions"><button class="btn" data-back>Back</button><button class="btn primary" id="finish">Finish setup</button></div>
+  </section>
+
+  <section data-panel="5" class="card" hidden>
+    <h2>You are all set</h2>
+    <p class="muted">In DegenView open <strong>Settings ▸ Snapshots</strong> and enter:</p>
+    <dl class="kv">
+      <dt>Host address</dt><dd><code id="done-url"></code> <button class="btn small" data-copy="done-url">Copy</button></dd>
+      <div id="done-token-wrap" hidden><dt>Token</dt><dd><code id="done-token"></code> <button class="btn small" data-copy="done-token">Copy</button>
+        <p class="notice warn">This is the only time the token is shown. Create more later under Tokens.</p></dd></div>
+    </dl>
+    <p class="muted">Try it from a terminal:</p>
+    <pre id="done-curl"></pre>
+    <div class="actions"><a class="btn primary" href="/admin">Open the admin console</a></div>
+  </section>
+</main>
+{{end}}
