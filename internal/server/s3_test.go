@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
@@ -181,5 +182,49 @@ func TestRemotePlaintextS3IsRefused(t *testing.T) {
 	w = e.do(req{method: "POST", path: "/setup/complete", json: b})
 	if w.Code != 400 || strings.Contains(w.Body.String(), "ALLOW_INSECURE_BACKENDS") {
 		t.Fatalf("setup with the override: %d %s", w.Code, w.Body)
+	}
+}
+
+// A storage change must wait for uploads in flight. Otherwise "no images here"
+// can turn false right after the check and strand the new image in the old store.
+func TestStorageSwitchWaitsForUploadsInFlight(t *testing.T) {
+	e := newEnv(t, withKey(make32()))
+	res := e.setup()
+	a := e.adminClient(res)
+	be := newFakeS3(t)
+
+	inserted := make(chan struct{})
+	release := make(chan struct{})
+	e.srv.testBeforePut = func() {
+		close(inserted)
+		<-release
+	}
+
+	uploaded := make(chan int, 1)
+	go func() { uploaded <- e.upload(pngBytes(t, 8, 8), res.resp.Token).Code }()
+	<-inserted // the row exists, the object is not written yet
+
+	in := decode[settingsView](t, a.do("GET", "/admin/api/settings", nil)).settingsInput
+	in.StorageKind = "s3"
+	in.S3 = s3Input{Endpoint: be.url, Region: "us-east-1", Bucket: "snaps", AccessKey: "AK", SecretKey: "s3-secret-value", PathStyle: true}
+	switched := make(chan *httptest.ResponseRecorder, 1)
+	go func() { switched <- a.do("PUT", "/admin/api/settings", in) }()
+
+	select {
+	case w := <-switched:
+		t.Fatalf("storage changed while an upload was in flight: %d %s", w.Code, w.Body)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+
+	if code := <-uploaded; code != 201 {
+		t.Fatalf("upload: %d", code)
+	}
+	w := <-switched
+	if w.Code != 409 || errCode(t, w) != "storage_in_use" {
+		t.Fatalf("switch after the upload: %d %s", w.Code, w.Body)
+	}
+	if e.srv.Store().Kind() != "local" {
+		t.Fatal("storage switched anyway")
 	}
 }

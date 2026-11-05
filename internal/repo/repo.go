@@ -17,6 +17,7 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("already exists")
+	ErrQuota    = errors.New("storage quota exceeded")
 )
 
 // Repo is the data access layer.
@@ -348,16 +349,57 @@ func scanImage(s interface{ Scan(...any) error }) (Image, error) {
 // CreateImage stores image metadata. ErrConflict means the id (or delete hash)
 // is taken and the caller should pick another.
 func (r *Repo) CreateImage(ctx context.Context, i Image) error {
+	return insertImageRow(ctx, r, r.db, i)
+}
+
+func insertImageRow(ctx context.Context, r *Repo, x execer, i Image) error {
 	var tok sql.NullString
 	if i.TokenID != "" {
 		tok = sql.NullString{String: i.TokenID, Valid: true}
 	}
-	_, err := r.db.ExecContext(ctx, r.q(`INSERT INTO images (`+imageCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+	_, err := x.ExecContext(ctx, r.q(`INSERT INTO images (`+imageCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		i.ID, i.DeleteHash, i.Storage, i.Size, i.Width, i.Height, tok, unix(i.CreatedAt), nullTime(i.ExpiresAt))
 	if isUnique(err) {
 		return ErrConflict
 	}
 	return err
+}
+
+// quotaLockID is the Postgres advisory lock that serialises quota-checked inserts.
+const quotaLockID = 0x44565351 // "DVSQ"
+
+// CreateImageWithinQuota stores i unless that would take the total of all image
+// sizes above maxTotal, in which case it returns ErrQuota. The check and the
+// insert are one serialised step, so concurrent uploads (even from several
+// instances) cannot overshoot: the row doubles as the reservation, and deleting
+// it releases the bytes. maxTotal <= 0 means unlimited.
+func (r *Repo) CreateImageWithinQuota(ctx context.Context, i Image, maxTotal int64) error {
+	if maxTotal <= 0 {
+		return r.CreateImage(ctx, i)
+	}
+	// SQLite opens transactions with BEGIN IMMEDIATE (see db.OpenSQLite), which
+	// already admits one writer at a time.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if r.db.Postgres {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, quotaLockID); err != nil {
+			return err
+		}
+	}
+	var total int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes), 0) FROM images`).Scan(&total); err != nil {
+		return err
+	}
+	if total+i.Size > maxTotal {
+		return ErrQuota
+	}
+	if err := insertImageRow(ctx, r, tx, i); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetImage returns an image by public id.

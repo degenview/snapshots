@@ -368,6 +368,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request, _ rep
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	// Block uploads while a storage change is checked and applied (see Server.storeMu).
+	s.storeMu.Lock()
+	defer s.storeMu.Unlock()
 	cur := s.state.Load().set
 	next := in.toSettings(cur)
 	if s.cfg.PublicURL != "" {
