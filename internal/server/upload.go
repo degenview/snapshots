@@ -98,18 +98,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if set.MaxTotalBytes > 0 {
-		stats, err := s.repo.ImageStats(r.Context())
-		if err != nil {
-			s.log.Error("stats failed", "id", requestID(r), "err", err)
-			apiFail(w, http.StatusInternalServerError, "internal", "Internal error.")
-			return
-		}
-		if stats.Bytes+int64(len(clean)) > set.MaxTotalBytes {
-			apiFail(w, http.StatusInsufficientStorage, "quota_exceeded", "The server's storage quota is full.")
-			return
-		}
-	}
+	// From here the storage state must not change under us (see Server.storeMu).
+	// Re-read it: a settings save may have landed while the body was read.
+	s.storeMu.RLock()
+	defer s.storeMu.RUnlock()
+	st = s.state.Load()
+	set = st.set
 
 	now := s.now().UTC()
 	img := repo.Image{Storage: st.store.Kind(), Size: int64(len(clean)), Width: int(info.Width), Height: int(info.Height),
@@ -117,11 +111,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if set.RetentionDays > 0 {
 		img.ExpiresAt = now.AddDate(0, 0, set.RetentionDays)
 	}
-	secret, err := s.insertImage(r.Context(), &img)
-	if err != nil {
+	// The quota check and the insert are one atomic step in the repository.
+	secret, err := s.insertImage(r.Context(), &img, set.MaxTotalBytes)
+	if errors.Is(err, repo.ErrQuota) {
+		apiFail(w, http.StatusInsufficientStorage, "quota_exceeded", "The server's storage quota is full.")
+		return
+	} else if err != nil {
 		s.log.Error("storing image metadata failed", "id", requestID(r), "err", err)
 		apiFail(w, http.StatusInternalServerError, "internal", "Internal error.")
 		return
+	}
+	if s.testBeforePut != nil {
+		s.testBeforePut()
 	}
 	// Row first: if the object write fails or the process dies, the row simply
 	// points at nothing (a 404) and the janitor removes it at expiry.
@@ -144,9 +145,10 @@ func tooLarge(w http.ResponseWriter, limit int64) {
 	apiFail(w, http.StatusRequestEntityTooLarge, "payload_too_large", "The image is larger than "+humanBytes(limit)+".")
 }
 
-// insertImage picks a fresh id and delete secret and stores the row, retrying
-// on the (astronomically unlikely) collision.
-func (s *Server) insertImage(ctx context.Context, img *repo.Image) (secret string, err error) {
+// insertImage picks a fresh id and delete secret and stores the row (within the
+// total-size quota when maxTotal > 0), retrying on the (astronomically unlikely)
+// id collision.
+func (s *Server) insertImage(ctx context.Context, img *repo.Image, maxTotal int64) (secret string, err error) {
 	for attempt := 0; attempt < 5; attempt++ {
 		if img.ID, err = ids.ImageID(); err != nil {
 			return "", err
@@ -155,7 +157,7 @@ func (s *Server) insertImage(ctx context.Context, img *repo.Image) (secret strin
 			return "", err
 		}
 		img.DeleteHash = ids.Hash(secret)
-		err = s.repo.CreateImage(ctx, *img)
+		err = s.repo.CreateImageWithinQuota(ctx, *img, maxTotal)
 		if !errors.Is(err, repo.ErrConflict) {
 			return secret, err
 		}
