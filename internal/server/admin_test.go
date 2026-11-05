@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -370,5 +373,83 @@ func TestAdminPageServed(t *testing.T) {
 	w := e.get("/admin")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `/static/admin.js`) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("%d", w.Code)
+	}
+}
+
+// Many clients logging in at once must not run more than maxConcurrentHashes
+// Argon2 operations together; the rest are turned away with 503 and Retry-After.
+func TestAdminLoginBoundsConcurrentHashing(t *testing.T) {
+	old := hashSlotWait
+	hashSlotWait = 100 * time.Millisecond
+	t.Cleanup(func() { hashSlotWait = old })
+
+	e := newEnv(t)
+	e.setup()
+
+	var inflight, peak atomic.Int32
+	gate := make(chan struct{})
+	e.srv.verify = func(string, string) bool {
+		n := inflight.Add(1)
+		defer inflight.Add(-1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		<-gate
+		return false
+	}
+
+	const clients = 10
+	codes := make(chan int, clients)
+	retry := make(chan string, clients)
+	var wg sync.WaitGroup
+	for i := 0; i < clients; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			w := e.do(req{method: "POST", path: "/admin/api/login", json: loginRequest{Password: "wrong-attempt"},
+				remote: fmt.Sprintf("198.51.100.%d:1", i+1)})
+			codes <- w.Code
+			retry <- w.Header().Get("Retry-After")
+		}(i)
+	}
+
+	// The turned-away requests finish while the admitted ones are still holding their slots.
+	deadline := time.Now().Add(5 * time.Second)
+	for len(codes) < clients-maxConcurrentHashes && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(gate)
+	wg.Wait()
+	close(codes)
+	close(retry)
+
+	if got := peak.Load(); got > maxConcurrentHashes {
+		t.Fatalf("%d password checks ran at once, limit %d", got, maxConcurrentHashes)
+	}
+	var busy, unauthorized int
+	for c := range codes {
+		switch c {
+		case http.StatusServiceUnavailable:
+			busy++
+		case http.StatusUnauthorized:
+			unauthorized++
+		default:
+			t.Errorf("unexpected status %d", c)
+		}
+	}
+	if unauthorized != maxConcurrentHashes || busy != clients-maxConcurrentHashes {
+		t.Fatalf("got %d checked and %d busy, want %d and %d", unauthorized, busy, maxConcurrentHashes, clients-maxConcurrentHashes)
+	}
+	nRetry := 0
+	for r := range retry {
+		if r != "" {
+			nRetry++
+		}
+	}
+	if nRetry != busy {
+		t.Errorf("%d of %d busy responses carried Retry-After", nRetry, busy)
 	}
 }

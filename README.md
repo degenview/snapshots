@@ -109,6 +109,10 @@ Without this, everyone behind a proxy shares one rate-limit bucket.
 
 Terminate TLS at the proxy; the service speaks plain HTTP. It sets HSTS itself when the public URL is https.
 
+Password checks (Argon2id, 64 MiB each) are limited to two at a time across the whole process; further
+attempts get `503` with `Retry-After`. On a small instance also cap `/admin/api/login` at the proxy
+(for example a few requests per second in total) so that bursts never reach the service.
+
 ### Backups and upgrades
 
 State is the database plus the image store. Back up the SQLite file (or Postgres) and the images
