@@ -6,10 +6,9 @@ spec:
   region: nyc
   services:
     - name: snapshots
-      github:
-        repo: degenview/snapshots
+      git:
         branch: main
-        deploy_on_push: false
+        repo_clone_url: https://github.com/degenview/snapshots.git
       dockerfile_path: Dockerfile
       http_port: 8080
       instance_count: 1
