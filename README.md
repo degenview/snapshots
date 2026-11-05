@@ -42,6 +42,17 @@ Linux, macOS and Windows on the [releases page](https://github.com/degenview/sna
 docker run -d --name snapshots -p 127.0.0.1:8080:8080 -v snapshots-data:/data ghcr.io/degenview/snapshots:latest
 ```
 
+Releases carry build-provenance attestations. Verify what you downloaded before running it:
+
+```bash
+# archives (and checksums.txt): check the attestation, then the checksum
+gh attestation verify snapshots_<version>_linux_amd64.tar.gz --repo degenview/snapshots
+sha256sum --check --ignore-missing checksums.txt
+
+# the container image
+gh attestation verify oci://ghcr.io/degenview/snapshots:<version> --repo degenview/snapshots
+```
+
 ### DigitalOcean App Platform
 
 Press the **Deploy to DigitalOcean** button at the top. It creates the app and a development Postgres
