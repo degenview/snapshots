@@ -105,7 +105,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, "reading admin", err)
 		return
 	}
-	if len(in.Password) > 256 || !auth.VerifyPassword(in.Password, hash) {
+	release, ok := s.acquireHash(w, r)
+	if !ok {
+		return
+	}
+	valid := len(in.Password) <= 256 && s.verify(in.Password, hash)
+	release()
+	if !valid {
 		s.log.Warn("failed admin login", "id", requestID(r), "ip", clientKey(r))
 		apiFail(w, http.StatusUnauthorized, "invalid_credentials", "Incorrect password.")
 		return
@@ -150,7 +156,12 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request, _ 
 		s.internal(w, r, "reading admin", err)
 		return
 	}
-	if len(in.Current) > 256 || !auth.VerifyPassword(in.Current, hash) {
+	release, ok := s.acquireHash(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+	if len(in.Current) > 256 || !s.verify(in.Current, hash) {
 		apiFail(w, http.StatusUnauthorized, "invalid_credentials", "The current password is incorrect.")
 		return
 	}

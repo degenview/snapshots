@@ -42,6 +42,17 @@ Linux, macOS and Windows on the [releases page](https://github.com/degenview/sna
 docker run -d --name snapshots -p 127.0.0.1:8080:8080 -v snapshots-data:/data ghcr.io/degenview/snapshots:latest
 ```
 
+Releases carry build-provenance attestations. Verify what you downloaded before running it:
+
+```bash
+# archives (and checksums.txt): check the attestation, then the checksum
+gh attestation verify snapshots_<version>_linux_amd64.tar.gz --repo degenview/snapshots
+sha256sum --check --ignore-missing checksums.txt
+
+# the container image
+gh attestation verify oci://ghcr.io/degenview/snapshots:<version> --repo degenview/snapshots
+```
+
 ### DigitalOcean App Platform
 
 Press the **Deploy to DigitalOcean** button at the top. It creates the app and a development Postgres
@@ -113,6 +124,10 @@ solely through a proxy that sets the header, as on App Platform (`CLIENT_IP_HEAD
 Without this, everyone behind a proxy shares one rate-limit bucket.
 
 Terminate TLS at the proxy; the service speaks plain HTTP. It sets HSTS itself when the public URL is https.
+
+Password checks (Argon2id, 64 MiB each) are limited to two at a time across the whole process; further
+attempts get `503` with `Retry-After`. On a small instance also cap `/admin/api/login` at the proxy
+(for example a few requests per second in total) so that bursts never reach the service.
 
 ### Backups and upgrades
 

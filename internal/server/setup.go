@@ -210,7 +210,12 @@ func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		apiFail(w, http.StatusBadRequest, "invalid_settings", err.Error())
 		return
 	}
+	release, ok := s.acquireHash(w, r)
+	if !ok {
+		return
+	}
 	hash, err := auth.HashPassword(in.Password)
+	release()
 	if err != nil {
 		s.internal(w, r, "hashing password", err)
 		return
