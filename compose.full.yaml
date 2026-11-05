@@ -19,6 +19,8 @@ services:
       DATABASE_URL: postgres://snapshots:snapshots@postgres:5432/snapshots?sslmode=disable
       SECRET_KEY: dev-only-secret-key-change-me-0123456789abcdef
       SETUP_TOKEN: dev-setup-token-change-me
+      # The Postgres and S3 containers are on a private Compose network without TLS. Do not copy this to production.
+      ALLOW_INSECURE_BACKENDS: "true"
     depends_on:
       postgres:
         condition: service_healthy

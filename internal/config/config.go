@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -32,6 +33,10 @@ type Config struct {
 
 	LogLevel  slog.Level
 	LogFormat string // "json" or "text"
+
+	// AllowInsecureBackends silences the plaintext-transport checks for Postgres
+	// and S3 on hosts that are not this computer (ALLOW_INSECURE_BACKENDS=true).
+	AllowInsecureBackends bool
 }
 
 // Load builds a Config from getenv (os.Getenv in production).
@@ -43,6 +48,13 @@ func Load(getenv func(string) string) (*Config, error) {
 		SetupToken:     strings.TrimSpace(getenv("SETUP_TOKEN")),
 		ClientIPHeader: strings.TrimSpace(getenv("CLIENT_IP_HEADER")),
 		LogFormat:      strings.ToLower(first(getenv("LOG_FORMAT"), "json")),
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("ALLOW_INSECURE_BACKENDS"))) {
+	case "", "0", "false", "no":
+	case "1", "true", "yes":
+		c.AllowInsecureBackends = true
+	default:
+		return nil, fmt.Errorf("ALLOW_INSECURE_BACKENDS must be true or false, got %q", getenv("ALLOW_INSECURE_BACKENDS"))
 	}
 
 	if v := strings.TrimSpace(getenv("PUBLIC_URL")); v != "" {
@@ -150,6 +162,44 @@ func NormalizePublicURL(raw string) (string, error) {
 	u.Path = strings.TrimRight(u.Path, "/")
 	return u.String(), nil
 }
+
+// PostgresPlaintext reports whether DATABASE_URL names Postgres on a host other
+// than this computer with TLS switched off (sslmode=disable). The driver's
+// default, sslmode=prefer, negotiates TLS when the server offers it.
+func (c *Config) PostgresPlaintext() bool {
+	if !c.IsPostgres() {
+		return false
+	}
+	u, err := url.Parse(c.DatabaseURL)
+	if err != nil {
+		return false
+	}
+	q := u.Query()
+	if !strings.EqualFold(q.Get("sslmode"), "disable") {
+		return false
+	}
+	if h := q.Get("host"); strings.HasPrefix(h, "/") { // unix socket
+		return false
+	}
+	hosts := strings.Split(u.Host, "@")
+	hosts = strings.Split(hosts[len(hosts)-1], ",")
+	if len(hosts) == 1 && hosts[0] == "" {
+		return false // no host: the local socket
+	}
+	for _, h := range hosts {
+		name := h
+		if hn, _, err := net.SplitHostPort(h); err == nil {
+			name = hn
+		}
+		if !IsLoopbackHost(strings.Trim(name, "[]")) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsLoopbackHost reports whether host is localhost or a loopback address.
+func IsLoopbackHost(host string) bool { return isLoopback(host) }
 
 func isLoopback(host string) bool {
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {

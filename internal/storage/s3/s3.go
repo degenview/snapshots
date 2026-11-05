@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
+	"github.com/degenview/snapshots/internal/config"
 	"github.com/degenview/snapshots/internal/storage"
 )
 
@@ -42,6 +44,20 @@ func (c Config) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// Plaintext reports whether the endpoint is http:// on a host other than this
+// computer, so credentials and images would cross the network unencrypted.
+func (c Config) Plaintext() bool {
+	host, secure, err := splitEndpoint(c.Endpoint)
+	if err != nil || secure {
+		return false
+	}
+	name := host
+	if hn, _, err := net.SplitHostPort(host); err == nil {
+		name = hn
+	}
+	return !config.IsLoopbackHost(strings.Trim(name, "[]"))
 }
 
 // splitEndpoint turns "https://host:port" or "host" into (host, secure).

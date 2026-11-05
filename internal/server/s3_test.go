@@ -8,6 +8,8 @@ import (
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+
+	"github.com/degenview/snapshots/internal/config"
 )
 
 func make32() []byte { return bytes.Repeat([]byte{9}, 32) }
@@ -153,5 +155,31 @@ func TestAdminCanSwitchStorageWhenEmpty(t *testing.T) {
 	in.S3.Bucket = "snaps"
 	if r := decode[testResult](t, a.do("POST", "/admin/api/settings/test-storage", in)); !r.OK {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// Plain http:// to a host that is not this computer is refused unless the
+// operator acknowledges it; loopback (the fake S3 above) always works.
+func TestRemotePlaintextS3IsRefused(t *testing.T) {
+	remote := s3Input{Endpoint: "http://s3.invalid:9000", Region: "us-east-1", Bucket: "snaps", AccessKey: "AK", SecretKey: "x", PathStyle: true}
+
+	e := newEnv(t, withKey(make32()))
+	w := e.do(req{method: "POST", path: "/setup/complete", json: func() setupCompleteRequest {
+		b := defaultSetup()
+		b.StorageKind, b.S3 = "s3", remote
+		return b
+	}()})
+	if w.Code != 400 || errCode(t, w) != "storage_test_failed" || !strings.Contains(w.Body.String(), "ALLOW_INSECURE_BACKENDS") {
+		t.Fatalf("setup with remote http S3: %d %s", w.Code, w.Body)
+	}
+
+	// With the acknowledgement the policy check passes; the test then fails for
+	// the real reason (the host does not exist), not because of http://.
+	e = newEnv(t, withKey(make32()), func(c *config.Config, _ *env) { c.AllowInsecureBackends = true })
+	b := defaultSetup()
+	b.StorageKind, b.S3 = "s3", remote
+	w = e.do(req{method: "POST", path: "/setup/complete", json: b})
+	if w.Code != 400 || strings.Contains(w.Body.String(), "ALLOW_INSECURE_BACKENDS") {
+		t.Fatalf("setup with the override: %d %s", w.Code, w.Body)
 	}
 }

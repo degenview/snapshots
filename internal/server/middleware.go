@@ -148,6 +148,8 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin") // image delivery overrides this
+		h.Set("X-Permitted-Cross-Domain-Policies", "none")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "+
 			"connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
