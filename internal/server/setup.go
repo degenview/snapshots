@@ -134,12 +134,18 @@ func (s *Server) handleSetupTestStorage(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, s.testStorage(r.Context(), in.toSettings(settings.Defaults())))
 }
 
+var errPlaintextS3 = errors.New("the endpoint uses http:// on a remote host, so the access key, secret and images would travel unencrypted. " +
+	"Use an https:// endpoint, or set ALLOW_INSECURE_BACKENDS=true if the network is private and trusted")
+
 // testStorage writes, reads and deletes a probe object in the configured backend.
 func (s *Server) testStorage(ctx context.Context, set settings.Settings) testResult {
 	if set.StorageKind == storage.KindS3 {
 		if err := set.S3.Config().Validate(); err != nil {
 			return testResult{Error: err.Error()}
 		}
+	}
+	if set.StorageKind == storage.KindS3 && set.S3.Config().Plaintext() && !s.cfg.AllowInsecureBackends {
+		return testResult{Error: errPlaintextS3.Error()}
 	}
 	store, err := s.buildStore(set)
 	if err != nil {

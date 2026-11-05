@@ -131,3 +131,40 @@ func TestNormalizePublicURL(t *testing.T) {
 		t.Fatal("PUBLIC_URL not validated")
 	}
 }
+
+func TestPostgresPlaintext(t *testing.T) {
+	for url, want := range map[string]bool{
+		"postgres://u:p@db.example.com/x":                          false, // driver default: prefer TLS
+		"postgres://u:p@db.example.com/x?sslmode=require":          false,
+		"postgres://u:p@db.example.com/x?sslmode=verify-full":      false,
+		"postgres://u:p@db.example.com:5432/x?sslmode=disable":     true,
+		"postgres://u:p@db.example.com/x?sslmode=DISABLE":          true,
+		"postgres://u:p@postgres:5432/x?sslmode=disable":           true,
+		"postgres://u:p@a.example.com,127.0.0.1/x?sslmode=disable": true,
+		"postgres://u:p@localhost:5432/x?sslmode=disable":          false,
+		"postgres://u:p@127.0.0.1/x?sslmode=disable":               false,
+		"postgres://u:p@[::1]:5432/x?sslmode=disable":              false,
+		"postgres:///x?host=/var/run/postgresql&sslmode=disable":   false,
+		"sqlite:///var/x.db":                                       false,
+	} {
+		c, err := Load(env(map[string]string{"DATABASE_URL": url}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.PostgresPlaintext(); got != want {
+			t.Errorf("%s: PostgresPlaintext() = %v, want %v", url, got, want)
+		}
+	}
+}
+
+func TestAllowInsecureBackends(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "false": false, "0": false, "true": true, "TRUE": true, "1": true} {
+		c, err := Load(env(map[string]string{"ALLOW_INSECURE_BACKENDS": v}))
+		if err != nil || c.AllowInsecureBackends != want {
+			t.Errorf("%q: %v %v", v, c.AllowInsecureBackends, err)
+		}
+	}
+	if _, err := Load(env(map[string]string{"ALLOW_INSECURE_BACKENDS": "maybe"})); err == nil {
+		t.Fatal("garbage accepted")
+	}
+}

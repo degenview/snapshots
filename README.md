@@ -95,6 +95,11 @@ Infrastructure settings are environment variables. Everything else is in the bro
 | `SECRET_KEY` | generated in `DATA_DIR` (SQLite only) | encrypts the S3 secret at rest (≥ 32 characters). **Required with Postgres** if you use S3 |
 | `TRUSTED_PROXIES` + `CLIENT_IP_HEADER` | unset | see [Behind a proxy](#behind-a-proxy) |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | `debug…error` / `json` or `text` |
+| `ALLOW_INSECURE_BACKENDS` | `false` | acknowledge plaintext links to backends on other hosts: an `http://` S3 endpoint (otherwise refused) or `sslmode=disable` in `DATABASE_URL` (otherwise a startup warning). Loopback is always allowed |
+
+Backend connections: use an `https://` S3 endpoint and, for a Postgres on another host, `sslmode=verify-full`
+(or at least `require`). The driver default, `prefer`, uses TLS when the server offers it but does not verify
+it. Set `ALLOW_INSECURE_BACKENDS=true` only for a private network you trust, such as the Compose test stack.
 
 In the admin console: public address, retention (1 day – 1 year – never), upload token requirement,
 largest image (default 24 MiB, DegenView's limit), total storage quota, per-IP upload and view

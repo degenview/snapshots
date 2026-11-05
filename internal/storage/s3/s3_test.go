@@ -166,3 +166,21 @@ func TestConfigValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaintext(t *testing.T) {
+	for ep, want := range map[string]bool{
+		"":                            false, // AWS, https
+		"nyc3.digitaloceanspaces.com": false,
+		"https://s3.example.com":      false,
+		"http://127.0.0.1:9000":       false,
+		"http://localhost:9000":       false,
+		"http://[::1]:9000":           false,
+		"http://minio.internal:9000":  true,
+		"http://10.0.0.5:9000":        true,
+		"http://s3.example.com":       true,
+	} {
+		if got := (Config{Endpoint: ep}).Plaintext(); got != want {
+			t.Errorf("%q: Plaintext() = %v, want %v", ep, got, want)
+		}
+	}
+}

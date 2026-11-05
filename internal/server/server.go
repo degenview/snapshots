@@ -148,6 +148,9 @@ func (s *Server) Init(ctx context.Context) error {
 	if !found {
 		return nil
 	}
+	if set.StorageKind == storage.KindS3 && set.S3.Config().Plaintext() && !s.cfg.AllowInsecureBackends {
+		s.log.Warn("S3 endpoint uses plaintext http:// on a remote host; set ALLOW_INSECURE_BACKENDS=true to acknowledge or switch to https://")
+	}
 	return s.apply(set)
 }
 

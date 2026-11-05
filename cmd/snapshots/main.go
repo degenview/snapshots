@@ -69,6 +69,10 @@ func serve() error {
 		handler = slog.NewJSONHandler(os.Stderr, opts)
 	}
 	log := slog.New(handler)
+	if cfg.PostgresPlaintext() && !cfg.AllowInsecureBackends {
+		log.Warn("DATABASE_URL has sslmode=disable for a remote host; credentials and data cross the network unencrypted. " +
+			"Use sslmode=verify-full, or set ALLOW_INSECURE_BACKENDS=true to acknowledge a private, trusted network")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

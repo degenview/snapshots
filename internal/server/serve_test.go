@@ -200,11 +200,15 @@ func TestSecurityHeadersOnPages(t *testing.T) {
 	e := newEnv(t)
 	for _, p := range []string{"/setup", "/healthz", "/static/app.css", "/nope"} {
 		h := e.get(p).Header()
-		for _, k := range []string{"X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options", "Content-Security-Policy", "X-Request-Id"} {
+		for _, k := range []string{"X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options", "Content-Security-Policy", "X-Request-Id",
+			"Cross-Origin-Resource-Policy", "X-Permitted-Cross-Domain-Policies"} {
 			if h.Get(k) == "" {
 				t.Errorf("%s: missing %s", p, k)
 			}
 		}
+	}
+	if got := e.get("/setup").Header().Get("Cross-Origin-Resource-Policy"); got != "same-origin" {
+		t.Fatalf("pages must default to CORP same-origin, got %q", got)
 	}
 	csp := e.get("/setup").Header().Get("Content-Security-Policy")
 	for _, want := range []string{"default-src 'none'", "script-src 'self'", "frame-ancestors 'none'", "base-uri 'none'"} {
