@@ -65,6 +65,8 @@ type Server struct {
 	limLogin  *ratelimit.Limiter
 	limSetup  *ratelimit.Limiter
 	uploadSem chan struct{}
+	hashSem   chan struct{} // bounds concurrent Argon2 work, see hashing.go
+	verify    func(pw, encoded string) bool
 
 	state atomic.Pointer[state] // nil until setup is complete
 
@@ -98,6 +100,8 @@ func New(d Deps) (*Server, error) {
 		tokens:     &auth.Tokens{Repo: d.Repo, Now: now},
 		resolver:   ratelimit.NewResolver(d.Config.TrustedProxies, d.Config.TrustAnyProxy, d.Config.ClientIPHeader),
 		uploadSem:  make(chan struct{}, maxConcurrentUploads),
+		hashSem:    make(chan struct{}, maxConcurrentHashes),
+		verify:     auth.VerifyPassword,
 	}
 	const maxKeys = 100_000
 	def := settings.Defaults()
