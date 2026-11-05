@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -69,6 +70,15 @@ type Server struct {
 	verify    func(pw, encoded string) bool
 
 	state atomic.Pointer[state] // nil until setup is complete
+
+	// storeMu orders storage changes against uploads: an upload holds the read
+	// side from choosing the store until its row and object are written, and a
+	// settings save holds the write side, so "no images here" cannot become false
+	// between a save's check and its switch. It covers one process only.
+	storeMu sync.RWMutex
+	// testBeforePut, when set by a test, runs after the image row exists and
+	// before the object is written.
+	testBeforePut func()
 
 	pages   map[string]*template.Template
 	static  map[string]staticFile

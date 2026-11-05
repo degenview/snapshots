@@ -419,3 +419,60 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// Concurrent quota-checked inserts must never take the total above the limit,
+// however they interleave.
+func TestCreateImageWithinQuotaIsAtomic(t *testing.T) {
+	eachBackend(t, func(t *testing.T, r *Repo) {
+		const size, limit, workers = 1000, 2500, 8 // room for two
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		accepted := 0
+		start := make(chan struct{})
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				i2 := img(fmt.Sprintf("quota%05d", i))
+				i2.Size = size
+				i2.DeleteHash = fmt.Sprintf("hash%d", i)
+				<-start
+				err := r.CreateImageWithinQuota(ctx, i2, limit)
+				switch {
+				case err == nil:
+					mu.Lock()
+					accepted++
+					mu.Unlock()
+				case !errors.Is(err, ErrQuota):
+					t.Error(err)
+				}
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		st, err := r.ImageStats(ctx)
+		must(t, err)
+		if accepted != 2 || st.Bytes != 2*size || st.Bytes > limit {
+			t.Fatalf("accepted %d, stored %d bytes (limit %d)", accepted, st.Bytes, limit)
+		}
+	})
+}
+
+func TestCreateImageWithinQuotaUnlimitedAndRelease(t *testing.T) {
+	eachBackend(t, func(t *testing.T, r *Repo) {
+		a := img("quotaaaaa1")
+		a.Size = 900
+		must(t, r.CreateImageWithinQuota(ctx, a, 0)) // 0 = unlimited
+		b := img("quotabbbb2")
+		b.Size = 200
+		b.DeleteHash = "hb"
+		if err := r.CreateImageWithinQuota(ctx, b, 1000); !errors.Is(err, ErrQuota) {
+			t.Fatalf("want ErrQuota, got %v", err)
+		}
+		must(t, r.DeleteImage(ctx, a.ID)) // deleting releases the bytes
+		must(t, r.CreateImageWithinQuota(ctx, b, 1000))
+		if err := r.CreateImageWithinQuota(ctx, b, 1000); !errors.Is(err, ErrConflict) {
+			t.Fatalf("want ErrConflict for a reused id, got %v", err)
+		}
+	})
+}
