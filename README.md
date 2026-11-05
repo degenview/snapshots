@@ -42,6 +42,16 @@ Linux, macOS and Windows on the [releases page](https://github.com/degenview/sna
 docker run -d --name snapshots -p 127.0.0.1:8080:8080 -v snapshots-data:/data ghcr.io/degenview/snapshots:latest
 ```
 
+| Tag | Moves when | Use for |
+| --- | --- | --- |
+| `<version>` (`1.2.3`, `1.2.3-rc.1`) | never: one per release | production |
+| `<major>.<minor>` and `latest` | a stable release | following stable releases |
+| `edge` | every commit to `main` that passes CI | trying unreleased changes |
+| `sha-<commit>` | never: one per commit on `main` | pinning an `edge` build |
+
+`edge` is not a release: it can contain unfinished work, so do not run it for anything you depend on.
+Pin by digest (`@sha256:…`) to stop a tag from moving under you.
+
 Releases carry build-provenance attestations. Verify what you downloaded before running it:
 
 ```bash
@@ -49,7 +59,7 @@ Releases carry build-provenance attestations. Verify what you downloaded before 
 gh attestation verify snapshots_<version>_linux_amd64.tar.gz --repo degenview/snapshots
 sha256sum --check --ignore-missing checksums.txt
 
-# the container image
+# the container image (versioned, edge and sha tags are all attested)
 gh attestation verify oci://ghcr.io/degenview/snapshots:<version> --repo degenview/snapshots
 ```
 
@@ -204,8 +214,13 @@ web/                  embedded templates and static files
 ```
 
 CI runs formatting, `go vet`, golangci-lint, `govulncheck`, the full test suite with `-race` against
-SQLite and Postgres, and a container smoke test on every pull request. Releases are cut manually:
-**Actions ▸ Release ▸ Run workflow**, enter a version (`1.2.3` or `1.2.3-rc.1`).
+SQLite and Postgres, and a container smoke test on every pull request. After CI passes on `main`,
+the **Edge image** workflow pushes `ghcr.io/degenview/snapshots:edge` and `:sha-<commit>`. Releases are
+cut manually: **Actions ▸ Release ▸ Run workflow**, enter a version (`1.2.3` or `1.2.3-rc.1`); only
+releases publish versioned tags and `latest`.
+
+A new GHCR package is private. Make it public once (organization ▸ Packages ▸ `snapshots` ▸ Package
+settings ▸ Change visibility) or the `docker run` commands above ask for a login.
 
 ### Limits worth knowing
 
